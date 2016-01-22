@@ -1,0 +1,270 @@
+#!/bin/sh
+
+################################################################################
+# ribs: Rsync Incremental Backup Script
+#
+# This script is used to make incremental backups of the specified directories
+# tree. The following parameters control the execution of the script:
+#   + MNT: mount point for the backup drive;
+#   + SRC: source for the backup, e.g. "/" to backup the entire system or
+#           "/home/dude/" to backup the home directory of user "dude";
+#   + DEST: optional destination directory on the backup drive;
+#   + OPTS: additional rsync options;
+#   + EXCL: optional exclude rules;
+#   + EXCLFILE: optional file containing the exclude rules;
+#   + INCL: optional include rules;
+#   + INCLFILE: optional file containing the include rules;
+#   + DATEFMT: date string used in the snapshots name
+#   + NAMEFMT: format of the snapshots name;
+#   + HISTSIZE: number of snapshots to keep in the backup history;
+#
+# Initially, the script makes sure that the backup drive is mounted, i.e. that
+# it is listed in /etc/mtab. If not, it tries to mount it. To mount the drive
+# without root permissions, the user should create an entry in /etc/fstab,
+# such as:
+#   UUID=drive_id /mount/point auto rw,user,exec,noauto,relatime,nofail 0 0
+# It may also be necessary to change the owner and/or group of the mount point
+# to allow writing to it as user. Of course, if root directories are selected
+# as the source of the backup, the script must be run as root.
+#
+# The trailing slash (/) controls how the directories are created on the backup
+# drive. If / is appended to SRC, the directory SRC itself will not be created
+# on the drive, only its contents. See rsync documentation for details. If DEST
+# is empty, the snapshots are created directly in MNT/. Otherwise, they are
+# created in MNT/DEST/. A symbolic link called "current" always points to the
+# most recent snapshot.
+#
+# The variables DATEFMT and NAMEFMT are used to control the naming of the
+# snapshot directories. DATEFMT also controls the frequency at which the script
+# can be executed, because it replaces an existing snapshot with the same name
+# as the one being created. For example, if one wants to run the backup script
+# every hour, DATEFMT should be something like "%Y-%m-%d.%H". Note that DATEFMT
+# uses the format of the Linux utility "date". To use the date string in
+# NAMEFMT, use the string "DATE", as in NAMEFMT="backup-DATE". By default,
+# NAMEFMT="DATE".
+#
+# Backups are created using the following rsync options (see documentation for
+# more details):
+#   * a: archive mode (equals options rlptgoD);
+#   * A: preserve ACLs;
+#   * X: preserve extended attributes;
+#   * H: preserve hard links.
+# The variable OPTS can be used to add more options. The following ones are used
+# by default:
+#   * S: handle sparse files efficiently;
+#   * numeric-ids: don't map uid/gid values by user/group name;
+#   * delete, delete-excluded, delete-after: delete extraneous and excluded
+#       files after the transfer;
+#   * v, h, stats, progress: add verbose, show progress and statistics using
+#       human-readable numbers.
+# The user is refered to rsync documentation for information on how to specify
+# the include/exclude rules.
+#
+# Note that the verbose is written to the file MNT/DEST/ribs-backup.log.
+#
+# References:
+#   - https://github.com/thebestsolution/backup-script
+#   - www.nickalls.org/dick/papers/linux/usbdrive.pdf
+#
+# Author: Louis-Philippe Rousseau
+# Created: October 2015, updated in January 2016
+################################################################################
+
+
+################################################################################
+### setup variables ###
+
+## mount point for the backup drive
+MNT="/mnt/backup"
+
+## source of the backup
+SRC="/"
+
+## destination directory on the backup drive
+DEST="hostname"
+
+## additional rsync options
+OPTS="-Svh --numeric-ids --delete --delete-excluded --delete after --stats \
+    --progress"
+
+## include/exclude rules
+# include rules
+INCL=""
+# exclude rules
+EXCL=""
+# file containing the include rules
+INCLFILE=""
+# file containing the exclude rules
+EXCLFILE="/mnt/backup/hostname/backup.exclude"
+
+## format of the date in the snapshots name
+DATEFMT="%Y-%m-%d"
+
+## format of the snapshots name
+NAMEFMT="DATE"
+
+## number of snapshots to keep in the backup history
+HISTSIZE=40
+
+
+################################################################################
+### validate the backup setup ###
+
+## make sure the backup drive is mounted, otherwise mount it
+mntTest=$( grep $MNT /etc/mtab )
+if [ -z "$mntTest" ]
+then
+    # the drive is not mounted, notify the user ann try to mount it
+    echo "The backup drive is not mounted. Trying to mount it now..."
+    mount $MNT
+
+    # check if mount was successful
+    mntTestNew=$( grep $MNT /etc/mtab )
+    if [ -z "$mntTestNew" ]
+    then
+        # mount failed, return error and exit
+        echo "ERROR: mounting the backup drive failed. Make sure it is plugged \
+            in and powered on or that you have sufficient privileges to mount \
+            it. Aborting..."
+        exit 1
+    fi
+    unset mntTestNew
+fi
+unset mntTest
+
+## make sure the source for the backup exists
+if [ ! -d $SRC ]
+then
+    # the source directory does not exist, return error and exit
+    echo "ERROR: the backup source directory does not exist. Aborting..."
+    exit 1
+fi
+
+## path to the destination directory
+DESTPATH="$MNT/$DEST"
+
+## make sure the destination directory exists
+if [ ! -d $DESTPATH ]
+then
+    # the destination directory does not exist, create it
+    mkdir $DEST
+fi
+
+## make sure the file(s) containing the provided include/exclude rules exist
+if [ ! -z $INCLFILE ] && [ ! -f $INCLFILE ]
+then
+    # the file containing the include rules does not exist,
+    # return warning and reset the variable
+    echo "WARNING: the specified file containing the include rules does not \
+        exist. Ignoring..."
+    unset INCLFILE
+    INCLFILE=""
+fi
+if [ ! -z $EXCLFILE ] && [ ! -f $EXCLFILE ]
+then
+    # the file containing the exclude rules does not exist,
+    # return warning and reset the variable
+    echo "WARNING: the specified file containing the exclude rules does not \
+        exist. Ignoring..."
+    unset EXCLFILE
+    EXCLFILE=""
+fi
+
+## create the include/exclude string for rsync
+INCLEXCL=""
+if [ ! -z $INCL ]
+then
+    INCLEXCL="--include=$INCL"
+fi
+if [ ! -z $INCLFILE ]
+then
+    INCLEXCL="$INCLEXCL --include-from=$INCLFILE"
+fi
+if [ ! -z $EXCL ]
+then
+    INCLEXCL="$INCLEXCL --exclude=$EXCL"
+fi
+if [ ! -z $EXCLFILE ]
+then
+    INCLEXCL="$INCLEXCL --exclude-from=$EXCLFILE"
+fi
+
+## set the log file name
+LOG="$DESTPATH/ribs-backup.log"
+
+## create the date string
+DATE=$( date +$DATEFMT )
+
+## define the name of the snapshot
+SNAPNAME=$( echo $NAMEFMT | sed -e "s/DATE/$DATE/g" )
+unset DATE
+
+## make sure the 'current' directory exists
+if [ ! -d "$DESTPATH"/current ]
+then
+    mkdir $DESTPATH/current
+fi
+
+## if necessary, run the backup as root
+# owner of the source directory
+OWNSRC=$( stat -c "%u" $SRC )
+USERID=$( id -u )
+if [ $USERID -ne $OWNSRC ]
+then
+    # the user is not the owner of the source directory,
+    # return warning and set the sudo string
+    echo "WARNING: the backup must be run as root. You will be prompted for
+        the root password."
+    SUSTR="sudo"
+else
+    # the user is the owner of the source directory, no sudo necessary
+    SUSTR=""
+fi
+unset OWNSRC
+unset USERID
+
+
+## if a snapshot with the same name exists, return a warning and delete it
+if [ -d "$DESTPATH/$SNAPNAME" ]
+then
+    echo "WARNING: a snapshot with the name $SNAPNAME already exists in the \
+        destination directory, deleting it..."
+    $SUSTR rm -rf $DESTPATH/$SNAPNAME
+fi
+
+
+################################################################################
+### backup and clean up ###
+
+## display a message for the start of the backup
+echo "Running rsync now!"
+$SUSTR rsync -aAXH $OPTS --link-dest=$DESTPATH/current $INCLEXCL $SRC \
+    $DESTPATH/$SNAPNAME > $LOG
+
+## check if backup was successful
+if [ "$?" -eq 0 ]
+then
+    # display success message
+    echo "Backup complete! Flushing the buffers and cleaning the directory..."
+
+    # flush the buffers
+    sync
+
+    # make the 'current' directory point to the latest snapshot
+    rm -rf $DESTPATH/current
+    ln -s $DESTPATH/$SNAPNAME $DESTPATH/current
+
+    # if necessary, remove the extra (oldest) snapshots
+    CNT=$( find $DESTPATH/*20* -maxdepth 0 -type d  | wc -l )
+    if [ $CNT -gt $HISTSIZE ]; then
+        $SUSTR rm -rf $( ls -d $DESTPATH/*20* | sort | head -n 1 )
+    fi
+    unset CNT
+else
+    # display failure message
+    echo "ERROR: rsync returned exit code $?..."
+fi
+
+# notify the user processing is over
+echo "Done!"
+
