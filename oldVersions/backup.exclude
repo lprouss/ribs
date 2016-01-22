@@ -1,0 +1,31 @@
+# Generic includes
++ /dev/console
++ /dev/initctl
++ /dev/null
++ /dev/zero
+
+# Generic excludes
+- /dev/*
+- /proc/*
+- /sys/*
+- /tmp/*
+- /media/*
+- /mnt/*
+- /run/*
+- /var/run
+- /var/lock
+- /var/cache/apt/archives
+- /lost+found/
+- /home/*/.gvfs
+- /home/*/.cache/chromium/*
+- /home/*/.cache/mozilla/*
+- /home/*/.thumbnails/*
+- /home/*/.local/share/Trash/*
+
+# User-specific includes/excludes
+#- /home/elpe/tmp/torrents/*
+#- /home/elpe/shared/*
+#- /home/elpe/media/backgrounds/*
+#- /home/elpe/media/pictures/*
+#- /home/elpe/media/music/*
+#- /home/elpe/media/videos/*
