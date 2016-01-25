@@ -11,9 +11,9 @@
 #   + DEST: optional destination directory on the backup drive;
 #   + OPTS: additional rsync options;
 #   + EXCL: optional exclude rules;
-#   + EXCLFILE: optional file containing the exclude rules;
-#   + INCL: optional include rules;
-#   + INCLFILE: optional file containing the include rules;
+#   + INCLEXCL: optional include and exclude patterns;
+#   + INCLFILE: optional file containing the include patterns;
+#   + EXCLFILE: optional file containing the exclude patterns;
 #   + DATEFMT: date string used in the snapshots name
 #   + NAMEFMT: format of the snapshots name;
 #   + HISTSIZE: number of snapshots to keep in the backup history;
@@ -57,8 +57,12 @@
 #       files after the transfer;
 #   * v, h, stats, progress: add verbose, show progress and statistics using
 #       human-readable numbers.
-# The user is refered to rsync documentation for information on how to specify
-# the include/exclude rules.
+#
+# INCLEXCL should be a string formed with one or several "--include=" and/or
+# "--exclude-". The user is refered to rsync documentation for information on
+# how to specify the include/exclude patterns. Parameters "--include-from="
+# and/or "--exclude-from=" will be automatically prepended to the existing
+# file(s) specified using INCLFILE and EXCLFILE, respectively.
 #
 # Note that the verbose is written to the file MNT/DEST/ribs-backup.log.
 #
@@ -84,18 +88,17 @@ SRC="/"
 DEST="hostname"
 
 ## additional rsync options
-OPTS="-Svh --numeric-ids --delete --delete-excluded --delete after --stats \
+OPTS="-Svh --numeric-ids --delete --delete-excluded --delete-after --stats \
     --progress"
 
-## include/exclude rules
-# include rules
-INCL=""
-# exclude rules
-EXCL=""
-# file containing the include rules
+## include/exclude patterns
+# include and exclude patterns
+INCLEXCL=""
+
+# file containing the include patterns
 INCLFILE=""
-# file containing the exclude rules
-EXCLFILE="/mnt/backup/hostname/backup.exclude"
+# file containing the exclude patterns
+EXCLFILE="./backup.exclude"
 
 ## format of the date in the snapshots name
 DATEFMT="%Y-%m-%d"
@@ -124,8 +127,8 @@ then
     then
         # mount failed, return error and exit
         echo "ERROR: mounting the backup drive failed. Make sure it is plugged \
-            in and powered on or that you have sufficient privileges to mount \
-            it. Aborting..."
+in and powered on or that you have sufficient privileges to mount it.\
+Aborting..."
         exit 1
     fi
     unset mntTestNew
@@ -147,7 +150,7 @@ DESTPATH="$MNT/$DEST"
 if [ ! -d $DESTPATH ]
 then
     # the destination directory does not exist, create it
-    mkdir $DEST
+    mkdir $DESTPATH
 fi
 
 ## make sure the file(s) containing the provided include/exclude rules exist
@@ -156,7 +159,7 @@ then
     # the file containing the include rules does not exist,
     # return warning and reset the variable
     echo "WARNING: the specified file containing the include rules does not \
-        exist. Ignoring..."
+exist. Ignoring..."
     unset INCLFILE
     INCLFILE=""
 fi
@@ -165,28 +168,25 @@ then
     # the file containing the exclude rules does not exist,
     # return warning and reset the variable
     echo "WARNING: the specified file containing the exclude rules does not \
-        exist. Ignoring..."
+exist. Ignoring..."
     unset EXCLFILE
     EXCLFILE=""
 fi
 
 ## create the include/exclude string for rsync
-INCLEXCL=""
-if [ ! -z $INCL ]
+INEXSTR=""
+if [ ! -z "$INCLEXCL" ]
 then
-    INCLEXCL="--include=$INCL"
+    INEXSTR="$INCLEXCL"
 fi
-if [ ! -z $INCLFILE ]
+
+if [ ! -z "$INCLFILE" ]
 then
-    INCLEXCL="$INCLEXCL --include-from=$INCLFILE"
+    INEXSTR="$INEXSTR --include-from=$INCLFILE"
 fi
-if [ ! -z $EXCL ]
+if [ ! -z "$EXCLFILE" ]
 then
-    INCLEXCL="$INCLEXCL --exclude=$EXCL"
-fi
-if [ ! -z $EXCLFILE ]
-then
-    INCLEXCL="$INCLEXCL --exclude-from=$EXCLFILE"
+    INEXSTR="$INEXSTR --exclude-from=$EXCLFILE"
 fi
 
 ## set the log file name
@@ -213,8 +213,7 @@ if [ $USERID -ne $OWNSRC ]
 then
     # the user is not the owner of the source directory,
     # return warning and set the sudo string
-    echo "WARNING: the backup must be run as root. You will be prompted for
-        the root password."
+    echo "WARNING: the backup must be run as root."
     SUSTR="sudo"
 else
     # the user is the owner of the source directory, no sudo necessary
@@ -228,7 +227,7 @@ unset USERID
 if [ -d "$DESTPATH/$SNAPNAME" ]
 then
     echo "WARNING: a snapshot with the name $SNAPNAME already exists in the \
-        destination directory, deleting it..."
+destination directory, deleting it..."
     $SUSTR rm -rf $DESTPATH/$SNAPNAME
 fi
 
@@ -238,7 +237,7 @@ fi
 
 ## display a message for the start of the backup
 echo "Running rsync now!"
-$SUSTR rsync -aAXH $OPTS --link-dest=$DESTPATH/current $INCLEXCL $SRC \
+$SUSTR rsync -aAXH $OPTS --link-dest=$DESTPATH/current $INEXSTR $SRC \
     $DESTPATH/$SNAPNAME > $LOG
 
 ## check if backup was successful
@@ -266,5 +265,5 @@ else
 fi
 
 # notify the user processing is over
-echo "Done!"
+echo "Done! Remember to unmount the backup drive."
 
